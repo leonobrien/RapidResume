@@ -1,0 +1,262 @@
+**Objective**: Extract key professional information from a resume (provided as raw text) and format it into a structured, compressed JSON output to minimize token cost. Additionally, generate a professional profile summary that synthesizes the candidate's experience and skills. The extraction must be robust to various formatting styles and handle missing or ambiguous data gracefully by including specific error codes and confidence scores.
+
+**Input**: Raw text content of a resume or CV, or the content extracted from a provided file attachment (e.g., .docx, .pdf).
+
+**Output Format**: 
+- Strict JSON. The output must conform to the following schema, using short keys and condensed values.
+- If a field is successfully extracted with high confidence and no issues, its value should be directly populated.
+- If a field cannot be extracted, or is extracted with low confidence, or has an invalid format, an errors array will be present within the containing JSON object. This array will contain objects, each describing an error for a specific field. If there are no errors for any fields within an object, the errors array MUST NOT be present.
+- Each extracted field includes a confidence score (cs) from 0.0 to 1.0, where 1.0 indicates highest confidence.
+
+------------ START OUTPUT FORMAT JSON SCHEMA ------------
+{
+  "r": { // resume_data
+    "p": { // personal_info
+      "n": "string", // full_name
+      "cs": 0.95, // confidence_score for name extraction
+      "c": { // contact_details
+        "e": "string", // email
+        "cs_e": 0.98, // confidence_score for email
+        "p": "string", // phone
+        "cs_p": 0.85, // confidence_score for phone
+        "errors": [
+          {
+            "f": "string", // field name (e.g., "e", "p")
+            "c": "string", // error code
+            "m": "string" // error message
+          }
+        ]
+      },
+      "l": "string", // location (city, state/province, country)
+      "cs_l": 0.75, // confidence_score for location
+      "errors": [
+        {
+          "f": "string", // field name (e.g., "n", "l")
+          "c": "string",
+          "m": "string"
+        }
+      ]
+    },
+    "ps": { // profile_summary
+      "s": "string", // summary text (150-300 words professional narrative)
+      "cs": 0.88, // confidence_score for summary quality
+      "kw": ["string"], // key_words extracted for summary (5-10 most important terms)
+      "ye": 0, // years_experience (calculated total)
+      "cs_ye": 0.92, // confidence_score for experience calculation
+      "errors": [
+        {
+          "f": "string", // field name (e.g., "s", "ye")
+          "c": "string",
+          "m": "string"
+        }
+      ]
+    },
+    "e": [ // employment_history -> exp
+      {
+        "sd": "YYYY-MM-DD", // start_date
+        "cs_sd": 0.90, // confidence_score for start_date
+        "ed": "YYYY-MM-DD", // end_date (OMITTED if 's' is "C")
+        "cs_ed": 0.85, // confidence_score for end_date (omitted if 's' is "C")
+        "r": "string", // role_position
+        "cs_r": 0.95, // confidence_score for role
+        "o": "string", // employer (organization)
+        "cs_o": 0.90, // confidence_score for employer
+        "d": "string", // description
+        "cs_d": 0.80, // confidence_score for description completeness
+        "s": "P" | "C", // state ("P" for Past, "C" for Current)
+        "cs_s": 0.95, // confidence_score for state determination
+        "errors": [
+          {
+            "f": "string", // field name (e.g., "sd", "r", "d")
+            "c": "string",
+            "m": "string"
+          }
+        ]
+      }
+    ],
+    "edu": [ // education
+      {
+        "deg": "string", // degree
+        "cs_deg": 0.90, // confidence_score for degree
+        "inst": "string", // institution
+        "cs_inst": 0.85, // confidence_score for institution
+        "gd": "YYYY-MM-DD", // graduation_date
+        "cs_gd": 0.75, // confidence_score for graduation_date
+        "d": "string", // description
+        "cs_d": 0.70, // confidence_score for description
+        "errors": [
+          {
+            "f": "string", // field name (e.g., "deg", "inst", "gd")
+            "c": "string",
+            "m": "string"
+          }
+        ]
+      }
+    ],
+    "certs": [ // certifications
+      {
+        "name": "string", // name of certification
+        "cs_name": 0.90, // confidence_score for certification name
+        "issuer": "string", // issuing_body
+        "cs_issuer": 0.85, // confidence_score for issuer
+        "do": "YYYY-MM-DD", // date_obtained
+        "cs_do": 0.80, // confidence_score for date_obtained
+        "exp": "YYYY-MM-DD", // expiry_date (optional)
+        "cs_exp": 0.75, // confidence_score for expiry_date
+        "errors": [
+          {
+            "f": "string", // field name (e.g., "name", "issuer", "do")
+            "c": "string",
+            "m": "string"
+          }
+        ]
+      }
+    ],
+    "skills": [ // skills (array of skill objects with confidence)
+      {
+        "name": "string", // skill name
+        "cs": 0.85, // confidence_score for skill identification
+        "cat": "technical" | "soft" | "language" | "domain" // category classification
+      }
+    ],
+    "overall_cs": 0.87, // overall confidence score for the entire extraction
+    "processing_notes": "string", // brief notes about extraction challenges or highlights
+    "errors": [ // Top-level errors, e.g., if "skills" array itself is missing.
+      {
+        "f": "string", // field name (e.g., "skills")
+        "c": "string",
+        "m": "string"
+      }
+    ]
+  }
+}
+------------ END OUTPUT FORMAT JSON SCHEMA ------------
+
+**Error Codes and Their Meanings**:
+- NF: not_found - The specific piece of information could not be located.
+- IF: invalid_format - The extracted data could not be parsed into the required format.
+- LC: low_confidence - Information was extracted, but with significant ambiguity.
+- PE: partial_extraction - Only a portion of the expected information was extracted.
+- DQ: data_quality - The extracted data appears inconsistent or potentially incorrect.
+- FM: format_mismatch - The resume format made extraction particularly challenging.
+
+**Detailed Extraction Rules (referencing compressed keys)**:
+
+**1. Personal Information (p)**:
+- n (full_name): Identify and extract the full name of the resume owner.
+  - Error: If not found or ambiguous, add to p.errors with "f": "n".
+  - Confidence: 1.0 for clear header names, 0.8 for names embedded in text, 0.5 for uncertain extraction.
+- c.e (contact_details.email): Extract any valid email address.
+  - Error: If not found, add to c.errors with "f": "e".
+  - Confidence: 1.0 for valid format, 0.7 for potentially incomplete emails.
+- c.p (contact_details.phone): Extract any valid phone number.
+  - Error: If not found, add to c.errors with "f": "p".
+  - Confidence: 1.0 for standard formats, 0.8 for international formats, 0.6 for partial numbers.
+- l (location): Extract current location (city, state/province, country).
+  - Error: If not found or ambiguous, add to p.errors with "f": "l".
+  - Confidence: 1.0 for explicit location statements, 0.7 for inferred from contact info.
+
+**2. Profile Summary (ps)**:
+- s (summary): Generate a professional narrative (150-300 words) that synthesizes:
+  - Years of experience and career progression
+  - Key areas of expertise and specialization
+  - Notable achievements or industry focus
+  - Professional strengths and capabilities
+  - Career trajectory and current focus
+  - Use professional, third-person language suitable for recruitment purposes
+  - Error: If insufficient information to create meaningful summary, add to ps.errors with "f": "s".
+  - Confidence: Based on completeness and coherence of available information.
+- kw (key_words): Extract 5-10 most important professional terms/skills for indexing.
+  - Confidence: Based on frequency and context of term usage.
+- ye (years_experience): Calculate total professional experience from employment history.
+  - Error: If employment dates are insufficient for calculation, add to ps.errors with "f": "ye".
+  - Confidence: 1.0 for complete date ranges, 0.8 for estimated ranges, 0.5 for very incomplete data.
+
+**3. Employment History (e)**:
+- Identify sections like "Employment History", "Work Experience", etc.
+- For each distinct role:
+  - sd (start_date): Extract start date; convert to YYYY-MM-DD. Default to YYYY-01-01 if only year, YYYY-MM-01 if only month/year.
+    - Error: If not found or IF, add to current entry's errors with "f": "sd".
+    - Confidence: 1.0 for exact dates, 0.8 for month/year, 0.6 for year only, 0.4 for estimated.
+  - ed (end_date): Extract end date; convert to YYYY-MM-DD. If the position is current (s is "C"), this field MUST be omitted.
+    - Error: If IF for a non-omitted date, add to current entry's errors with "f": "ed".
+    - Confidence: Same scale as start_date.
+  - r (role_position): Extract job title/role.
+    - Error: If not found, add to current entry's errors with "f": "r".
+    - Confidence: 1.0 for clear titles, 0.8 for interpreted roles, 0.6 for ambiguous titles.
+  - o (employer): Extract company/organization name.
+    - Error: If not found, add to current entry's errors with "f": "o".
+    - Confidence: 1.0 for clear company names, 0.8 for abbreviated names, 0.6 for unclear organizations.
+  - d (description): Capture responsibilities, achievements.
+    - Error: If boundaries ambiguous or incomplete, add to current entry's errors with "f": "d" and c: "LC" or "PE".
+    - Confidence: Based on completeness and clarity of description.
+  - s (state): "P" for Past, "C" for Current.
+    - If ed is present and precedes current date, s is "P".
+    - If end date is "Present", "Current", or ed is omitted, s is "C".
+    - Error: If unclear, add to current entry's errors with "f": "s" and c: "LC".
+    - Confidence: 1.0 for explicit indicators, 0.8 for inferred from dates, 0.6 for ambiguous cases.
+
+**4. Education (edu)**:
+- Identify sections like "Education", "Academic Background".
+- For each formal qualification:
+  - deg (degree): Extract full degree name.
+    - Error: If not found, add to current education entry's errors with "f": "deg".
+    - Confidence: 1.0 for standard degree names, 0.8 for abbreviated degrees, 0.6 for unclear qualifications.
+  - inst (institution): Extract institution name.
+    - Error: If not found, add to current education entry's errors with "f": "inst".
+    - Confidence: 1.0 for full institution names, 0.8 for abbreviated names, 0.6 for unclear institutions.
+  - gd (graduation_date): Extract graduation date/year; convert to YYYY-MM-DD.
+    - Error: If not found or IF, add to current education entry's errors with "f": "gd".
+    - Confidence: 1.0 for exact dates, 0.8 for year only, 0.6 for estimated years.
+  - d (description): Capture any additional details about the education, such as majors, specializations, or relevant coursework.
+    - Error: If boundaries ambiguous or incomplete, add to current education entry's errors with "f": "d" and c: "LC".
+    - Confidence: Based on completeness and relevance of description.
+
+**5. Certifications (certs)**:
+- Identify sections like "Certifications", "Accreditations", "Training".
+- For each distinct certification:
+  - name: Extract full certification name.
+    - Error: If not found, add to current certification entry's errors with "f": "name".
+    - Confidence: 1.0 for official certification names, 0.8 for training courses, 0.6 for unclear qualifications.
+  - issuer (issuing_body): Extract issuing organization.
+    - Error: If not found, add to current certification entry's errors with "f": "issuer".
+    - Confidence: 1.0 for known organizations, 0.8 for unclear issuers, 0.6 for missing issuers.
+  - do (date_obtained): Extract date obtained; convert to YYYY-MM-DD.
+    - Error: If not found or IF, add to current certification entry's errors with "f": "do".
+    - Confidence: 1.0 for exact dates, 0.8 for year only, 0.6 for estimated dates.
+  - exp (expiry_date): Extract expiry date if mentioned; convert to YYYY-MM-DD.
+    - Error: If format invalid, add to current certification entry's errors with "f": "exp".
+    - Confidence: 1.0 for explicit expiry dates, 0.8 for calculated expiry, 0.6 for uncertain expiry.
+
+**6. Skills (skills)**:
+- Identify sections like "Skills", "Key Skills", "Professional Expertise".
+- Extract a comprehensive array of individual skills with categorization:
+  - name: Individual skill or technology name
+  - cat: Classify as "technical", "soft", "language", or "domain"
+  - cs: Confidence based on context and frequency of mention
+  - Error: If no clear skills section or identifiable skills are found in the entire document, add an error object to the top-level r.errors array with "f": "skills".
+
+**7. Overall Assessment**:
+- overall_cs: Calculate weighted average confidence score across all extracted fields
+- processing_notes: Brief summary of any extraction challenges, data quality issues, or notable aspects of the resume
+
+**General Guidelines for Extraction**:
+- Concise Output: Generate JSON with minimal whitespace.
+- Prioritize Clarity: When faced with multiple interpretations, choose the most explicit information.
+- Segment First: Logically segment the resume before detailed extraction.
+- Iterate: Process entries in arrays distinctly.
+- Handle Partial Data: Extract what's available and add errors for missing fields. Do not invent data.
+- Contextual Descriptions: Do not include content from other sections within d fields.
+- No PII Beyond Request: Do not extract any PII beyond requested fields.
+- Confidence Scoring: Be conservative with confidence scores - better to under-estimate than over-estimate.
+- Professional Language: Ensure all extracted text maintains professional tone and grammar.
+- Consistency: Maintain consistent formatting and terminology throughout the extraction.
+
+**Profile Summary Guidelines**:
+- Write in third person professional voice
+- Focus on value proposition and career highlights
+- Include quantifiable achievements when available
+- Synthesize information rather than listing raw facts
+- Maintain professional recruitment language
+- Ensure summary flows naturally and tells a coherent career story
+- Length: 150-300 words optimal for recruitment purposes
