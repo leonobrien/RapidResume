@@ -211,6 +211,10 @@ public class AnthropicAIProvider : IAIProvider
 ```
 
 #### Extraction Prompt Template
+Below is a simplified prompt, with the more substantial detail included in resouce [SystemPromptExtraction-Enhanced](./SystemPromptExtraction-Enhanced.txt)
+
+It is suspected that we will need to define a Agent in Anthropic Console with this system prompt to do this more effectively.
+
 ```text
 You are an expert resume parser. Extract the following information from the resume text below and return it as structured JSON:
 
